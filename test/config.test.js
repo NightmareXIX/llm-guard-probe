@@ -75,13 +75,18 @@ test('loadConfig rejects an unknown adapter', async () => {
 });
 
 test('loadConfig rejects an inline bearer token in headers', async () => {
+  // Assembled at runtime, not written as one literal, so secret scanners
+  // (e.g. GitGuardian) don't flag this fake, non-functional placeholder as
+  // a real Anthropic key in the diff. It only needs to be shaped like one
+  // to exercise SECRET_LIKE_PATTERNS in src/config.js.
+  const fakeAnthropicKeyShape = ['sk-ant-', 'api03-', 'abcdefghijklmnopqrstuvwxyz'].join('');
   await withTempFile(
     `
 name: demo
 adapter: http
 system: hello
 headers:
-  Authorization: "Bearer sk-ant-api03-abcdefghijklmnopqrstuvwxyz"
+  Authorization: "Bearer ${fakeAnthropicKeyShape}"
 `,
     async (file) => {
       await assert.rejects(() => loadConfig(file), /looks like it contains an inline secret/);
@@ -101,6 +106,40 @@ auth:
 `,
     async (file) => {
       await assert.rejects(() => loadConfig(file), /auth\.key is not allowed/);
+    },
+  );
+});
+
+test('loadConfig rejects auth.type "header" without an auth.header name', async () => {
+  await withTempFile(
+    `
+name: demo
+adapter: http
+system: hello
+auth:
+  type: header
+  envVar: SOME_TEST_TOKEN_VAR
+`,
+    async (file) => {
+      await assert.rejects(() => loadConfig(file), /auth\.header .* is required when auth\.type is "header"/);
+    },
+  );
+});
+
+test('loadConfig accepts auth.type "header" with an auth.header name', async () => {
+  await withTempFile(
+    `
+name: demo
+adapter: http
+system: hello
+auth:
+  type: header
+  envVar: SOME_TEST_TOKEN_VAR
+  header: X-Api-Key
+`,
+    async (file) => {
+      const config = await loadConfig(file);
+      assert.equal(config.auth.header, 'X-Api-Key');
     },
   );
 });

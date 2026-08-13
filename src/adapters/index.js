@@ -1,9 +1,11 @@
 import { create as createMockAdapter } from './mock.js';
+import { create as createHttpAdapter } from './http.js';
+import { create as createAnthropicAdapter } from './anthropic.js';
 
-// http and anthropic ship in Phase 4. Their names are still valid config
-// values (see src/config.js) — only the factory is missing until then.
 const registry = {
   mock: createMockAdapter,
+  http: createHttpAdapter,
+  anthropic: createAnthropicAdapter,
 };
 
 export function createAdapter(config) {

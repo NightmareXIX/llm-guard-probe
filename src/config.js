@@ -58,7 +58,7 @@ function validateConfigDocument(doc, filePath) {
     if (typeof doc.auth !== 'object' || Array.isArray(doc.auth)) {
       errors.push(`${filePath}: "auth" must be a mapping`);
     } else {
-      const allowedKeys = new Set(['type', 'envVar']);
+      const allowedKeys = new Set(['type', 'envVar', 'header']);
       for (const key of Object.keys(doc.auth)) {
         if (!allowedKeys.has(key)) {
           errors.push(`${filePath}: auth.${key} is not allowed — secrets must be referenced via auth.envVar, never inlined`);
@@ -69,6 +69,9 @@ function validateConfigDocument(doc, filePath) {
       }
       if (doc.auth.type && doc.auth.type !== 'none' && !doc.auth.envVar) {
         errors.push(`${filePath}: auth.envVar is required when auth.type is "${doc.auth.type}"`);
+      }
+      if (doc.auth.type === 'header' && (typeof doc.auth.header !== 'string' || doc.auth.header.trim() === '')) {
+        errors.push(`${filePath}: auth.header (the header name to send the token in, e.g. "X-Api-Key") is required when auth.type is "header"`);
       }
     }
   }
