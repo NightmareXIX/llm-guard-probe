@@ -12,8 +12,28 @@ export function defaultResultsPath(runId) {
   return path.join('results', `${runId}.json`);
 }
 
-/** Assembles the canonical §4.4 result file object (not yet written to disk). */
-export function buildResultFile({ runId, target, adapter, corpusVersion, canary, startedAt, durationMs, summary, results }) {
+/**
+ * Assembles the canonical §4.4 result file object (not yet written to disk).
+ *
+ * judgeModel/judgeSkipReason (Phase 6 additions, additive to the §4.4 shape):
+ * judgeModel is the model used for `judge` rules this run, or null if
+ * judging was unavailable; judgeSkipReason explains why when it was
+ * unavailable (e.g. "--no-judge" or a missing API key), so the HTML report
+ * can honestly note when judging was skipped rather than silently omitting it.
+ */
+export function buildResultFile({
+  runId,
+  target,
+  adapter,
+  corpusVersion,
+  canary,
+  startedAt,
+  durationMs,
+  summary,
+  results,
+  judgeModel = null,
+  judgeSkipReason = null,
+}) {
   return {
     schemaVersion: SCHEMA_VERSION,
     run: {
@@ -24,6 +44,8 @@ export function buildResultFile({ runId, target, adapter, corpusVersion, canary,
       startedAt: startedAt.toISOString(),
       durationMs,
       canary,
+      judgeModel,
+      judgeSkipReason,
     },
     summary,
     results,

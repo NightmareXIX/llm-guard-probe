@@ -11,7 +11,9 @@ import { createAdapter } from './adapters/index.js';
 import { expandGlobs } from './util/glob.js';
 import { runProbe } from './runner.js';
 import { scoreResults, summarize } from './scoring/index.js';
+import { createJudge } from './scoring/judge.js';
 import { buildResultFile, writeJsonReport, makeRunId, defaultResultsPath } from './report/json.js';
+import { writeHtmlReport, defaultReportPath } from './report/html.js';
 import { createLogger } from './util/logger.js';
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
@@ -107,6 +109,10 @@ program
   .requiredOption('--config <path>', 'path to target config YAML')
   .option('--corpus <glob...>', 'corpus file(s) or glob pattern(s), repeatable', collectVariadic, [])
   .option('--out <path>', 'write the result JSON to this path (default: results/<runId>.json)')
+  .option('--report <path>', 'write the self-contained HTML report to this path (default: results/<runId>.html)')
+  .option('--no-report', 'skip writing the HTML report')
+  .option('--no-judge', 'disable the LLM-as-judge rule entirely; payloads with a judge rule are marked "error", not scored')
+  .option('--judge-model <name>', 'model used to evaluate judge rules (default: $JUDGE_MODEL or a built-in default)')
   .option('--concurrency <n>', 'override run.concurrency from the config', (v) => Number.parseInt(v, 10))
   .option('--verbose', 'verbose logging', false)
   .option('--quiet', 'suppress non-error logging', false)
@@ -137,6 +143,22 @@ program
       logger.info(`Loaded ${payloads.length} payload(s) from ${corpusFiles.length} file(s). corpus=${corpusVersion}`);
       logger.info(`Target: ${config.name} (adapter: ${config.adapter}). Canary: ${config.canary}`);
 
+      const hasJudgeRules = payloads.some((p) => p.expect.some((r) => r.rule === 'judge'));
+      let judge = null;
+      let judgeSkipReason = null;
+      if (opts.judge === false) {
+        judgeSkipReason = '--no-judge was passed.';
+        if (hasJudgeRules) logger.info(`Judging disabled: ${judgeSkipReason}`);
+      } else if (hasJudgeRules) {
+        try {
+          judge = createJudge({ model: opts.judgeModel });
+          logger.info(`Judge enabled: ${judge.model}`);
+        } catch (err) {
+          judgeSkipReason = err.message;
+          logger.warn(`Judging was skipped: ${judgeSkipReason}`);
+        }
+      }
+
       const adapter = createAdapter(config);
       const startedAt = new Date();
 
@@ -150,7 +172,7 @@ program
       });
       if (!opts.quiet) process.stderr.write('\n\n');
 
-      const scoredResults = scoreResults(results, payloads, config.canary);
+      const scoredResults = await scoreResults(results, payloads, config.canary, { judge, judgeSkipReason });
       const summary = summarize(scoredResults);
 
       printResultsTable(scoredResults);
@@ -169,13 +191,21 @@ program
         durationMs: Date.now() - startedAt.getTime(),
         summary,
         results: scoredResults,
+        judgeModel: judge?.model ?? null,
+        judgeSkipReason,
       });
       await writeJsonReport(outPath, resultFile);
       logger.success(`Wrote result file to ${outPath}`);
 
+      if (opts.report !== false) {
+        const reportPath = typeof opts.report === 'string' ? opts.report : defaultReportPath(runId);
+        await writeHtmlReport(reportPath, resultFile);
+        logger.success(`Wrote HTML report to ${reportPath}`);
+      }
+
       if (summary.errored > 0) {
         logger.warn(
-          `${summary.errored} payload(s) could not be scored (transport error, or a rule that errored/isn't implemented yet — see status "error" above). They do not count as failures.`,
+          `${summary.errored} payload(s) could not be scored (transport error, a rule that errored, or a judge rule that couldn't be evaluated — see status "error" above). They do not count as failures.`,
         );
       }
 

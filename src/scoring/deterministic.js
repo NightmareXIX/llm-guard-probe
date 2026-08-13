@@ -135,9 +135,11 @@ const EVALUATORS = {
 
 /**
  * Evaluates one `expect` rule against a response. Returns { passed, evidence }.
- * Throws for the `judge` rule (Phase 6, not implemented) and for any other
- * unknown rule name — callers must catch and record these as `error`, never
- * silently treat them as pass or fail.
+ * Throws for the `judge` rule — that one is handled separately by
+ * src/scoring/judge.js, orchestrated from src/scoring/index.js, since it's
+ * async and needs its own client — and for any other unknown rule name.
+ * Callers must catch and record these as `error`, never silently treat them
+ * as pass or fail.
  */
 export function evaluateRule(rule, ctx) {
   const evaluator = EVALUATORS[rule.rule];
