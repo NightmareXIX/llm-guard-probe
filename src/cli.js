@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
 import 'dotenv/config';
 import { Command } from 'commander';
 import pc from 'picocolors';
@@ -14,6 +15,7 @@ import { scoreResults, summarize } from './scoring/index.js';
 import { createJudge } from './scoring/judge.js';
 import { buildResultFile, writeJsonReport, makeRunId, defaultResultsPath } from './report/json.js';
 import { writeHtmlReport, defaultReportPath } from './report/html.js';
+import { diffResults, sortDiffEntries, hasRegressions } from './util/diff.js';
 import { createLogger } from './util/logger.js';
 
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
@@ -99,6 +101,37 @@ function printCoverageMatrix({ categories, total, totalBySeverity }) {
   console.log(row('TOTAL', total, VALID_SEVERITIES.map((s) => totalBySeverity[s])));
 }
 
+const DIFF_HEADLINE = { regressed: 'regressed', fixed: 'fixed', changed: 'changed', new: 'new', removed: 'removed' };
+
+async function readResultFile(filePath) {
+  const raw = await readFile(filePath, 'utf8');
+  return JSON.parse(raw);
+}
+
+function printDiffSummary(diff) {
+  const { summary } = diff;
+  const regColor = summary.regressed > 0 ? pc.red : (s) => s;
+  console.log(
+    `\n${pc.bold('Changes since baseline:')} ${regColor(`${summary.regressed} regressed`)}, ` +
+      `${pc.green(`${summary.fixed} fixed`)}, ${summary.changed} changed, ${summary.new} new, ` +
+      `${summary.removed} removed, ${summary.unchanged} unchanged\n`,
+  );
+
+  const notable = sortDiffEntries(diff.entries.filter((e) => e.classification !== 'unchanged'));
+  if (notable.length === 0) {
+    console.log(pc.dim('  (no changes since baseline)\n'));
+    return;
+  }
+
+  for (const e of notable) {
+    const label = DIFF_HEADLINE[e.classification] ?? e.classification;
+    const color = e.classification === 'regressed' ? pc.red : e.classification === 'fixed' ? pc.green : pc.yellow;
+    const arrow = `${e.before ?? '—'} → ${e.after ?? '—'}`;
+    console.log(`  ${color(label.padEnd(9))} ${pc.bold(e.payloadId)} ${pc.dim(`[${e.category}]`)} ${e.severity ?? ''}  ${arrow}  — ${e.name ?? ''}`);
+  }
+  console.log();
+}
+
 const program = new Command();
 
 program.name('llm-guard-probe').description(pkg.description).version(pkg.version);
@@ -114,6 +147,10 @@ program
   .option('--no-judge', 'disable the LLM-as-judge rule entirely; payloads with a judge rule are marked "error", not scored')
   .option('--judge-model <name>', 'model used to evaluate judge rules (default: $JUDGE_MODEL or a built-in default)')
   .option('--concurrency <n>', 'override run.concurrency from the config', (v) => Number.parseInt(v, 10))
+  .option('--baseline <path>', 'path to a previous result JSON file; classifies each payload against it as fixed/regressed/unchanged/new/removed')
+  .option('--fail-under <rate>', 'exit 1 if the overall pass rate falls below this threshold (0-1)', (v) => Number.parseFloat(v))
+  .option('--fail-on-regression', 'exit 1 if any payload that previously passed now fails (requires --baseline)', false)
+  .option('--demo', 'mark the HTML report as a demo report with a prominent banner (used for the published docs/index.html)', false)
   .option('--verbose', 'verbose logging', false)
   .option('--quiet', 'suppress non-error logging', false)
   .action(async (opts) => {
@@ -122,6 +159,18 @@ program
 
     if (opts.corpus.length === 0) {
       logger.error('At least one --corpus glob is required.');
+      process.exitCode = 2;
+      return;
+    }
+
+    if (opts.failOnRegression && !opts.baseline) {
+      logger.error('--fail-on-regression requires --baseline <path> (there is nothing to compare against otherwise).');
+      process.exitCode = 2;
+      return;
+    }
+
+    if (opts.failUnder !== undefined && (Number.isNaN(opts.failUnder) || opts.failUnder < 0 || opts.failUnder > 1)) {
+      logger.error(`--fail-under must be a number between 0 and 1 (got "${opts.failUnder}").`);
       process.exitCode = 2;
       return;
     }
@@ -197,9 +246,28 @@ program
       await writeJsonReport(outPath, resultFile);
       logger.success(`Wrote result file to ${outPath}`);
 
+      let diff = null;
+      if (opts.baseline) {
+        try {
+          const baselineFile = await readResultFile(opts.baseline);
+          diff = diffResults(baselineFile, resultFile);
+          printDiffSummary(diff);
+        } catch (err) {
+          if (opts.failOnRegression) {
+            // --fail-on-regression exists to be a CI safety net; silently
+            // skipping it because the baseline was unreadable would make
+            // that gate meaningless without ever telling anyone.
+            logger.error(`Could not read baseline at ${opts.baseline}: ${err.message}. Refusing to continue with --fail-on-regression set.`);
+            process.exitCode = 2;
+            return;
+          }
+          logger.warn(`Could not read baseline at ${opts.baseline}: ${err.message}. Continuing without a baseline diff.`);
+        }
+      }
+
       if (opts.report !== false) {
         const reportPath = typeof opts.report === 'string' ? opts.report : defaultReportPath(runId);
-        await writeHtmlReport(reportPath, resultFile);
+        await writeHtmlReport(reportPath, resultFile, { diff, demo: !!opts.demo });
         logger.success(`Wrote HTML report to ${reportPath}`);
       }
 
@@ -209,11 +277,21 @@ program
         );
       }
 
-      // No --fail-under yet (Phase 7) — until then, "threshold breach" means
-      // simply: at least one payload actually failed its rules. Errored
-      // payloads are surfaced above but never turn a clean run red on their
-      // own, per CLAUDE.md standing rule 5 (fail and error are never conflated).
-      process.exitCode = summary.failed > 0 ? 1 : 0;
+      const failureReasons = [];
+      if (summary.failed > 0) failureReasons.push(`${summary.failed} payload(s) failed`);
+      if (opts.failUnder !== undefined && summary.passRate < opts.failUnder) {
+        logger.error(`Pass rate ${(summary.passRate * 100).toFixed(1)}% is below --fail-under threshold ${(opts.failUnder * 100).toFixed(1)}%.`);
+        failureReasons.push('pass rate below --fail-under threshold');
+      }
+      if (opts.failOnRegression && diff && hasRegressions(diff)) {
+        logger.error(`${diff.summary.regressed} payload(s) regressed since baseline (previously passing, now failing).`);
+        failureReasons.push(`${diff.summary.regressed} regression(s) since baseline`);
+      }
+
+      // Errored payloads are surfaced above but never turn a clean run red
+      // on their own, per CLAUDE.md standing rule 5 (fail and error are
+      // never conflated).
+      process.exitCode = failureReasons.length > 0 ? 1 : 0;
     } catch (err) {
       logger.error(err.message);
       process.exitCode = 2;
@@ -238,6 +316,24 @@ program
       logger.info(`Loaded ${payloads.length} payload(s) from ${corpusFiles.length} file(s). corpus=${corpusVersion}\n`);
 
       printCoverageMatrix(buildCoverageMatrix(payloads));
+    } catch (err) {
+      logger.error(err.message);
+      process.exitCode = 2;
+    }
+  });
+
+program
+  .command('diff')
+  .description('Compare two result files and classify each payload as fixed, regressed, changed, unchanged, new, or removed')
+  .argument('<baseline>', 'path to the baseline result JSON file')
+  .argument('<current>', 'path to the current result JSON file')
+  .action(async (baselinePath, currentPath) => {
+    const logger = createLogger({});
+    try {
+      const [baseline, current] = await Promise.all([readResultFile(baselinePath), readResultFile(currentPath)]);
+      const diff = diffResults(baseline, current);
+      printDiffSummary(diff);
+      process.exitCode = hasRegressions(diff) ? 1 : 0;
     } catch (err) {
       logger.error(err.message);
       process.exitCode = 2;

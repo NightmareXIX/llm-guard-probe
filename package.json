@@ -2,14 +2,41 @@
   "name": "llm-guard-probe",
   "version": "0.1.0",
   "description": "A defensive evaluation harness that regression-tests LLM applications against known prompt-injection and guardrail-bypass techniques.",
+  "keywords": [
+    "llm",
+    "security",
+    "prompt-injection",
+    "guardrails",
+    "red-team",
+    "owasp",
+    "regression-testing",
+    "anthropic",
+    "claude"
+  ],
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NightmareXIX/llm-guard-probe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NightmareXIX/llm-guard-probe/issues"
+  },
+  "homepage": "https://github.com/NightmareXIX/llm-guard-probe#readme",
   "engines": {
     "node": ">=20"
   },
   "bin": {
     "llm-guard-probe": "src/cli.js"
   },
+  "files": [
+    "src",
+    "corpus",
+    "configs",
+    "fixtures",
+    "prompts",
+    ".env.example"
+  ],
   "scripts": {
     "test": "node --test"
   },

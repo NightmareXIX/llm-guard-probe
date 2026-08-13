@@ -168,6 +168,48 @@ test('renderHtmlReport limitations section states non-determinism, single-turn s
   assert.match(section, /Heuristic scoring/);
 });
 
+test('renderHtmlReport omits the baseline-diff section when no diff is passed', () => {
+  const html = renderHtmlReport(sampleResultFile());
+  assert.doesNotMatch(html, /id="baseline-diff"/);
+});
+
+test('renderHtmlReport renders a "Changes since baseline" section at the top of <main> when a diff is passed', () => {
+  const diff = {
+    baselineId: '2026-08-13T00-00-00Z',
+    currentId: '2026-08-14T00-00-00Z',
+    summary: { fixed: 1, regressed: 1, unchanged: 2, new: 0, removed: 0, changed: 0 },
+    entries: [
+      { payloadId: 'spl-001', name: 'Direct instruction request', category: 'system-prompt-leak', severity: 'high', before: 'pass', after: 'fail', classification: 'regressed' },
+      { payloadId: 'di-001', name: 'script injection attempt', category: 'direct-injection', severity: 'critical', before: 'fail', after: 'pass', classification: 'fixed' },
+      { payloadId: 'ro-001', name: 'Persona override', category: 'role-override', severity: 'medium', before: 'error', after: 'error', classification: 'unchanged' },
+    ],
+  };
+  const html = renderHtmlReport(sampleResultFile(), { diff });
+
+  assert.match(html, /id="baseline-diff"/);
+  assert.ok(html.indexOf('id="baseline-diff"') < html.indexOf('id="severity-summary"'), 'diff section must come before the severity summary');
+  assert.match(html, /2026-08-13T00-00-00Z/);
+  assert.match(html, /1 regression/);
+  assert.match(html, /spl-001/);
+  assert.match(html, /di-001/);
+  assert.doesNotMatch(html.slice(html.indexOf('id="baseline-diff"'), html.indexOf('id="severity-summary"')), /ro-001/, 'unchanged payloads should not clutter the diff table');
+});
+
+test('renderHtmlReport omits the demo banner by default', () => {
+  const html = renderHtmlReport(sampleResultFile());
+  assert.doesNotMatch(html, /<div class="demo-banner">/);
+  assert.doesNotMatch(html, /This is a demo report/);
+});
+
+test('renderHtmlReport shows a prominent demo banner ahead of the header when demo: true', () => {
+  const html = renderHtmlReport(sampleResultFile(), { demo: true });
+  assert.match(html, /This is a demo report/);
+  assert.ok(
+    html.indexOf('<div class="demo-banner">') < html.indexOf('class="report-header"'),
+    'demo banner must appear before the header',
+  );
+});
+
 test('defaultReportPath nests the run id under results/ with an .html extension', () => {
   assert.equal(defaultReportPath('2026-08-13T02-14-33Z'), path.join('results', '2026-08-13T02-14-33Z.html'));
 });

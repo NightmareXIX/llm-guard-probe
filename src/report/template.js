@@ -1,5 +1,6 @@
 import { VALID_SEVERITIES } from '../corpus/schema.js';
 import { DETERMINISTIC_RULE_NAMES } from '../scoring/deterministic.js';
+import { sortDiffEntries } from '../util/diff.js';
 
 // Critical first, per spec §5 Phase 5 task 2 ("Severity summary").
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
@@ -41,6 +42,19 @@ function rateClass(counts) {
   return 'good';
 }
 
+// Spec §5 Phase 8 task 2: the published demo report must make unmistakably
+// clear its target is a purpose-built demo, not a real product — this is
+// the most-visible thing on the page, ahead of even the header.
+function renderDemoBanner() {
+  return `
+  <div class="demo-banner">
+    <strong>This is a demo report.</strong> It was generated against a deliberately weak,
+    purpose-built system prompt (<code>configs/demo.yaml</code>) that this project owns —
+    it is <strong>not</strong> a security assessment of any real product, and the findings
+    below say nothing about any third party's guardrails.
+  </div>`;
+}
+
 function renderHeader(run, summary) {
   return `
   <header class="report-header">
@@ -62,6 +76,50 @@ function renderHeader(run, summary) {
       <span class="headline-detail">${summary.passed} passed &middot; ${summary.failed} failed &middot; ${summary.errored} errored &middot; ${summary.total} total</span>
     </div>
   </header>`;
+}
+
+const DIFF_LABEL = { regressed: 'regressed', fixed: 'fixed', changed: 'changed', new: 'new', removed: 'removed' };
+
+/**
+ * Renders the "Changes since baseline" section (spec §5 Phase 7 task 3),
+ * present only when `run --baseline` was used. Placed at the top of the
+ * report, before the severity summary, per that spec line. `diff` is the
+ * `src/util/diff.js` output — see that module for what "changed" means
+ * (a transition through/into `error`, deliberately not called a regression
+ * or a fix).
+ */
+function renderBaselineDiff(diff) {
+  if (!diff) return '';
+
+  const { summary } = diff;
+  const notable = sortDiffEntries(diff.entries.filter((e) => e.classification !== 'unchanged'));
+
+  const rows = notable.map((e) => `
+      <tr class="diff-${e.classification}">
+        <td class="mono">${escapeHtml(e.payloadId)}</td>
+        <td>${escapeHtml(e.name ?? '')}</td>
+        <td>${escapeHtml(e.category ?? '')}</td>
+        <td><span class="badge sev-${e.severity}">${escapeHtml(e.severity ?? '')}</span></td>
+        <td><span class="badge diff-badge-${e.classification}">${DIFF_LABEL[e.classification] ?? e.classification}</span></td>
+        <td class="mono">${escapeHtml(e.before ?? '—')} &rarr; ${escapeHtml(e.after ?? '—')}</td>
+      </tr>`).join('');
+
+  const table = notable.length
+    ? `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Category</th><th>Severity</th><th>Change</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="section-intro empty">No changes since baseline — every payload has the same status it did before.</p>`;
+
+  const headline = summary.regressed > 0
+    ? `<strong class="diff-regressed-callout">${summary.regressed} regression${summary.regressed === 1 ? '' : 's'}</strong> — a payload that previously passed now fails.`
+    : 'No regressions.';
+
+  return `
+  <section id="baseline-diff">
+    <h2>Changes since baseline</h2>
+    <p class="section-intro">Compared against baseline run <code class="mono">${escapeHtml(diff.baselineId ?? 'unknown')}</code>.
+    ${headline}
+    ${summary.fixed} fixed &middot; ${summary.changed} changed &middot; ${summary.new} new &middot; ${summary.removed} removed &middot; ${summary.unchanged} unchanged.</p>
+    ${table}
+  </section>`;
 }
 
 function renderSeveritySummary(bySeverity) {
@@ -347,6 +405,12 @@ const STYLE = `
     line-height: 1.5;
   }
   main, .report-header { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+  .demo-banner {
+    background: var(--warn-bg); color: var(--warn); border-bottom: 1px solid var(--border);
+    padding: 12px 24px; text-align: center; font-size: 0.9rem;
+  }
+  .demo-banner code { background: rgba(0,0,0,0.06); }
   h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   h1 { font-size: 1.9rem; margin: 0.2em 0 0.4em; }
   h2 { font-size: 1.3rem; margin-top: 2.5em; padding-top: 0.75em; border-top: 1px solid var(--border); }
@@ -467,6 +531,14 @@ const STYLE = `
   .badge.status-fail { background: var(--bad-bg); color: var(--bad); }
   .badge.status-error { background: var(--warn-bg); color: var(--warn); }
 
+  .diff-regressed-callout { color: var(--bad); }
+  tr.diff-regressed { background: var(--bad-bg); }
+  tr.diff-fixed { background: var(--good-bg); }
+  tr.diff-changed, tr.diff-new, tr.diff-removed { background: var(--warn-bg); }
+  .badge.diff-badge-regressed { background: var(--bad-bg); color: var(--bad); }
+  .badge.diff-badge-fixed { background: var(--good-bg); color: var(--good); }
+  .badge.diff-badge-changed, .badge.diff-badge-new, .badge.diff-badge-removed { background: var(--warn-bg); color: var(--warn); }
+
   .limitations-list { padding-left: 1.2em; display: flex; flex-direction: column; gap: 10px; }
   .judge-skipped { background: var(--warn-bg); border: 1px solid var(--border); border-left: 4px solid var(--warn); border-radius: var(--radius); padding: 10px 14px; }
 
@@ -522,7 +594,7 @@ const SCRIPT = `
  * embedded verbatim in a <script type="application/json"> block so the
  * report also carries its own machine-readable data (e.g. for later diffing).
  */
-export function renderHtmlReport(resultFile) {
+export function renderHtmlReport(resultFile, { diff = null, demo = false } = {}) {
   const { run, summary, results } = resultFile;
 
   return `<!doctype html>
@@ -534,8 +606,10 @@ export function renderHtmlReport(resultFile) {
 <style>${STYLE}</style>
 </head>
 <body>
+${demo ? renderDemoBanner() : ''}
 ${renderHeader(run, summary)}
 <main>
+${renderBaselineDiff(diff)}
 ${renderSeveritySummary(summary.bySeverity)}
 ${renderCoverageMatrix(summary.byCategory)}
 ${renderFindings(results)}

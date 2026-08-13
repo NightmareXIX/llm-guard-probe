@@ -1,0 +1,79 @@
+# Example CI gate for llm-guard-probe (spec §5 Phase 7 task 6).
+#
+# Runs the corpus against the mock adapter on every push/PR — no API keys
+# required, so this works out of the box as a template. Point --config at a
+# real target config (and add the relevant secret to `env:` below) to gate
+# your own application instead.
+#
+# Baseline comparison: this workflow best-effort downloads the result JSON
+# uploaded by the most recent successful run on the default branch and
+# passes it as --baseline, so PRs fail loudly on any guardrail regression
+# (spec §5 Phase 7 task 5 — "the flag most teams would actually use"). If no
+# baseline artifact exists yet (e.g. the very first run), the probe proceeds
+# without one rather than failing the build.
+name: llm-guard-probe
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download baseline result from main (best effort)
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
+        with:
+          workflow: probe.yml
+          branch: main
+          name: llm-guard-probe-result
+          path: baseline
+          if_no_artifact_found: warn
+
+      - name: Run probe
+        id: probe
+        run: |
+          BASELINE_ARGS=""
+          if [ -f baseline/result.json ]; then
+            echo "Baseline found — running with --baseline and --fail-on-regression."
+            BASELINE_ARGS="--baseline baseline/result.json --fail-on-regression"
+          else
+            echo "No baseline artifact available yet; running without one."
+          fi
+
+          node src/cli.js run \
+            --config configs/mock.yaml \
+            --corpus 'corpus/*.yaml' \
+            --out results/result.json \
+            --report results/report.html \
+            --fail-under 0.85 \
+            $BASELINE_ARGS
+
+      # Always upload, even on failure, so a failing PR still gets a report
+      # and so the *next* run on main has a baseline to compare against.
+      - name: Upload result and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-guard-probe-result
+          path: |
+            results/result.json
+            results/report.html
+          retention-days: 90
