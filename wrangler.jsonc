@@ -1,0 +1,11 @@
+// Deploys docs/index.html (the published demo report, see README.md) as a
+// static-assets-only Cloudflare Worker — no server code, no build step.
+// Cloudflare's Git integration runs `npx wrangler deploy`, which reads this
+// file to know what to publish.
+{
+  "name": "llm-guard-probe-report",
+  "compatibility_date": "2026-08-14",
+  "assets": {
+    "directory": "./docs"
+  }
+}

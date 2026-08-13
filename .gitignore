@@ -13,3 +13,6 @@ npm-debug.log*
 
 # Test/coverage output, if a coverage tool is added later
 coverage/
+
+# Wrangler local dev/deploy cache (docs/ demo report deploy — see wrangler.jsonc)
+.wrangler/
