@@ -1,0 +1,22 @@
+{
+  "name": "llm-guard-probe",
+  "version": "0.1.0",
+  "description": "A defensive evaluation harness that regression-tests LLM applications against known prompt-injection and guardrail-bypass techniques.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "llm-guard-probe": "src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "picocolors": "^1.1.1",
+    "yaml": "^2.9.0"
+  }
+}

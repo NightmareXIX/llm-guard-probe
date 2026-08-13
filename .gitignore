@@ -1,0 +1,15 @@
+node_modules/
+.env
+results/
+
+# Working notes for Claude Code — not part of the published project.
+CLAUDE.md
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+# Test/coverage output, if a coverage tool is added later
+coverage/
