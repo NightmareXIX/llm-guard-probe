@@ -37,7 +37,7 @@ npx llm-guard-probe run --config configs/demo.yaml --corpus 'corpus/*.yaml' \
 
 `--demo` adds the "this is a demo" banner; `--no-judge` is there because the LLM-as-judge layer always calls the real Anthropic API regardless of which adapter the target uses (see [Scoring methodology](#scoring-methodology)) — the published version runs without it so the demo stays free to regenerate. Swap `adapter: mock` for `adapter: anthropic` in `configs/demo.yaml` to run this same weak prompt against a real model instead.
 
-**Live report:** _add your GitHub Pages / Cloudflare Pages URL here once `docs/` is deployed — the file itself needs no server, so any static host works._
+**Live report:** https://llm-guard-probe.binaislam321.workers.dev/
 
 ## How it works
 
