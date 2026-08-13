@@ -5,6 +5,7 @@
 {
   "name": "llm-guard-probe-report",
   "compatibility_date": "2026-08-14",
+  "workers_dev": true,
   "assets": {
     "directory": "./docs"
   }
